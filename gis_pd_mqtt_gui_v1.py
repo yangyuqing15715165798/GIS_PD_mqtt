@@ -9,10 +9,9 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                               QGroupBox, QGridLayout, QSpinBox, QComboBox, 
-                              QStatusBar, QMessageBox, QCheckBox)
+                              QStatusBar, QMessageBox)
 from PySide6.QtCore import Qt, QTimer, Signal, Slot, QThread, QMutex
 from matplotlib import rcParams
-from mpl_toolkits.mplot3d import Axes3D
 import time
 import queue
 
@@ -27,33 +26,16 @@ matplotlib.rcParams['agg.path.chunksize'] = 10000
 
 class MplCanvas(FigureCanvas):
     """Matplotlib画布类，用于在Qt界面中嵌入matplotlib图形"""
-    def __init__(self, parent=None, width=10, height=4, dpi=100, with_3d=True):
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
         self.fig = Figure(figsize=(width, height), dpi=dpi)
-        
-        # 创建左右两个子图
-        if with_3d:
-            self.axes_2d = self.fig.add_subplot(121)  # 左侧2D图
-            self.axes_3d = self.fig.add_subplot(122, projection='3d')  # 右侧3D图
-        else:
-            self.axes_2d = self.fig.add_subplot(111)  # 只有2D图
-            self.axes_3d = None
-            
+        self.axes = self.fig.add_subplot(111)
         super(MplCanvas, self).__init__(self.fig)
         self.fig.tight_layout()
-        
         # 设置动画效果
         self.blit = False
-        self.axes_2d.grid(True, linestyle='--', alpha=0.7)
+        self.axes.grid(True, linestyle='--', alpha=0.7)
         self.scatter = None
         self.line = None
-        
-        # 3D图设置
-        if self.axes_3d:
-            self.axes_3d.set_title("GIS局部放电PRPS图")
-            self.axes_3d.set_xlabel("相位 (0~360°)")
-            self.axes_3d.set_ylabel("周期")
-            self.axes_3d.set_zlabel("幅值 (V)")
-            self.surface = None
 
 class MQTTThread(QThread):
     """MQTT处理线程，避免阻塞主线程"""
@@ -174,7 +156,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("GIS局部放电在线监测系统")
-        self.setMinimumSize(1200, 700)  # 增加窗口宽度以适应两个子图
+        self.setMinimumSize(1000, 700)
         
         # 数据存储
         self.data_buffer = []
@@ -185,11 +167,8 @@ class MainWindow(QMainWindow):
         
         # 周期数据存储
         self.cycle_count = 1  # 当前周期计数
-        self.max_cycles = 50  # 默认最大周期数，PRPS图需要50个周期
+        self.max_cycles = 10  # 默认最大周期数
         self.accumulated_data = []  # 累积的数据
-        
-        # 显示设置
-        self.show_3d_plot = True  # 是否显示3D图
         
         # 创建MQTT客户端
         self.mqtt_client = MQTTClient()
@@ -251,9 +230,9 @@ class MainWindow(QMainWindow):
         chart_settings_layout = QGridLayout()
         
         # 添加图表类型选择
-        chart_settings_layout.addWidget(QLabel("PRPD图类型:"), 0, 0)
+        chart_settings_layout.addWidget(QLabel("图表类型:"), 0, 0)
         self.chart_type_combo = QComboBox()
-        self.chart_type_combo.addItems(["散点图", "线图"])
+        self.chart_type_combo.addItems(["散点图", "线图"])  # 移除柱状图选项
         self.chart_type_combo.currentIndexChanged.connect(self.update_plot_type)
         chart_settings_layout.addWidget(self.chart_type_combo, 0, 1)
         
@@ -278,12 +257,6 @@ class MainWindow(QMainWindow):
         self.cycle_count_label = QLabel(f"{self.cycle_count}/{self.max_cycles}")
         chart_settings_layout.addWidget(self.cycle_count_label, 1, 3)
         
-        # 添加显示3D图选项
-        self.show_3d_checkbox = QCheckBox("显示PRPS三维图")
-        self.show_3d_checkbox.setChecked(self.show_3d_plot)
-        self.show_3d_checkbox.stateChanged.connect(self.toggle_3d_plot)
-        chart_settings_layout.addWidget(self.show_3d_checkbox, 2, 0, 1, 2)
-        
         # 添加清除数据按钮
         self.clear_button = QPushButton("清除数据")
         self.clear_button.clicked.connect(self.clear_data)
@@ -298,7 +271,7 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(chart_settings_group)
         
         # 创建matplotlib画布
-        self.canvas = MplCanvas(self, width=10, height=4, dpi=100, with_3d=self.show_3d_plot)
+        self.canvas = MplCanvas(self, width=5, height=4, dpi=100)
         main_layout.addWidget(self.canvas)
         
         # 创建状态栏
@@ -312,22 +285,6 @@ class MainWindow(QMainWindow):
         # 添加数据点数量标签
         self.data_count_label = QLabel("数据点: 0")
         self.status_bar.addPermanentWidget(self.data_count_label)
-    
-    def toggle_3d_plot(self, state):
-        """切换是否显示3D图"""
-        self.show_3d_plot = (state == Qt.CheckState.Checked.value)
-        
-        # 重新创建画布
-        old_canvas = self.canvas
-        self.canvas = MplCanvas(self, width=10, height=4, dpi=100, with_3d=self.show_3d_plot)
-        
-        # 替换布局中的画布
-        layout = self.centralWidget().layout()
-        layout.replaceWidget(old_canvas, self.canvas)
-        old_canvas.setParent(None)
-        
-        # 强制重绘
-        self.need_redraw = True
     
     def toggle_connection(self):
         """切换MQTT连接状态"""
@@ -395,22 +352,10 @@ class MainWindow(QMainWindow):
         self.cycle_count = 1
         self.cycle_count_label.setText(f"{self.cycle_count}/{self.max_cycles}")
         self.data_mutex.unlock()
-        
-        # 清除2D图
-        self.canvas.axes_2d.clear()
-        self.canvas.axes_2d.grid(True, linestyle='--', alpha=0.7)
+        self.canvas.axes.clear()
+        self.canvas.axes.grid(True, linestyle='--', alpha=0.7)
         self.canvas.scatter = None
         self.canvas.line = None
-        
-        # 清除3D图
-        if self.canvas.axes_3d:
-            self.canvas.axes_3d.clear()
-            self.canvas.axes_3d.set_title("GIS局部放电PRPS图")
-            self.canvas.axes_3d.set_xlabel("相位 (0~360°)")
-            self.canvas.axes_3d.set_ylabel("周期")
-            self.canvas.axes_3d.set_zlabel("幅值 (V)")
-            self.canvas.surface = None
-        
         self.canvas.draw()
         self.data_count_label.setText("数据点: 0")
     
@@ -457,31 +402,16 @@ class MainWindow(QMainWindow):
         
         if not accumulated_data_copy:
             return
-        
-        # 绘制2D图 (PRPD)
-        self.draw_prpd(accumulated_data_copy)
-        
-        # 如果启用了3D图，则绘制PRPS图
-        if self.show_3d_plot and self.canvas.axes_3d:
-            self.draw_prps(accumulated_data_copy)
-        
-        # 重绘画布
-        self.canvas.fig.tight_layout()
-        self.canvas.draw()
-        
-        self.need_redraw = False
-    
-    def draw_prpd(self, accumulated_data):
-        """绘制PRPD图"""
-        # 清除当前2D图
-        self.canvas.axes_2d.clear()
+            
+        # 清除当前图表
+        self.canvas.axes.clear()
         
         # 根据选择的图表类型绘制
         chart_type = self.chart_type_combo.currentText()
         
         # 合并所有周期的数据用于绘图
         all_data = []
-        for cycle_data in accumulated_data:
+        for cycle_data in accumulated_data_copy:
             all_data.extend(cycle_data)
         
         if not all_data:
@@ -492,84 +422,36 @@ class MainWindow(QMainWindow):
         phase_per_cycle = 360  # 每个周期的相位范围
         x_data = []
         
-        for i, cycle_data in enumerate(accumulated_data):
+        for i, cycle_data in enumerate(accumulated_data_copy):
             cycle_phases = np.linspace(0, phase_per_cycle, len(cycle_data))
             x_data.extend(cycle_phases)
         
         if chart_type == "散点图":
-            self.canvas.axes_2d.scatter(x_data, all_data, alpha=0.7, s=10)
+            self.canvas.axes.scatter(x_data, all_data, alpha=0.7, s=10)
         elif chart_type == "线图":
             # 对于线图，我们可能需要按周期分别绘制
-            for i, cycle_data in enumerate(accumulated_data):
+            for i, cycle_data in enumerate(accumulated_data_copy):
                 cycle_phases = np.linspace(0, phase_per_cycle, len(cycle_data))
-                self.canvas.axes_2d.plot(cycle_phases, cycle_data, linewidth=1.0, 
+                self.canvas.axes.plot(cycle_phases, cycle_data, linewidth=1.0, 
                                      label=f"周期 {i+1}")
             # 如果周期数较多，可以选择不显示图例
-            if len(accumulated_data) <= 10:
-                self.canvas.axes_2d.legend(loc='upper right')
+            if len(accumulated_data_copy) <= 10:
+                self.canvas.axes.legend(loc='upper right')
         
         # 设置图表标题和轴标签
         cycle_info = f"({self.cycle_count}/{self.max_cycles}周期)"
-        self.canvas.axes_2d.set_title(f"GIS局部放电PRPD图 {cycle_info}")
-        self.canvas.axes_2d.set_xlabel("相位 (0~360°)")
-        self.canvas.axes_2d.set_ylabel("幅值 (V)")
+        self.canvas.axes.set_title(f"GIS局部放电PRPD图 {cycle_info}")
+        self.canvas.axes.set_xlabel("相位 (0~360°)")
+        self.canvas.axes.set_ylabel("幅值 (V)")
         
         # 设置网格
-        self.canvas.axes_2d.grid(True, linestyle='--', alpha=0.7)
-    
-    def draw_prps(self, accumulated_data):
-        """绘制PRPS三维图"""
-        # 清除当前3D图
-        self.canvas.axes_3d.clear()
+        self.canvas.axes.grid(True, linestyle='--', alpha=0.7)
         
-        # 准备数据
-        num_cycles = len(accumulated_data)
-        if num_cycles == 0:
-            return
-            
-        # 创建网格数据
-        # X轴：相位
-        # Y轴：周期
-        # Z轴：幅值
+        # 重绘画布
+        self.canvas.fig.tight_layout()
+        self.canvas.draw()
         
-        # 找到所有周期中最大的数据点数
-        max_points = max(len(cycle_data) for cycle_data in accumulated_data)
-        
-        # 创建规则网格
-        phase = np.linspace(0, 360, max_points)
-        cycles = np.arange(1, num_cycles + 1)
-        
-        # 创建空的Z值矩阵
-        z_data = np.zeros((num_cycles, max_points))
-        
-        # 填充Z值矩阵
-        for i, cycle_data in enumerate(accumulated_data):
-            # 对于每个周期，我们需要将数据重采样到max_points个点
-            if len(cycle_data) == max_points:
-                z_data[i, :] = cycle_data
-            else:
-                # 如果周期的数据点数不等于max_points，则需要重采样
-                cycle_phases = np.linspace(0, 360, len(cycle_data))
-                z_data[i, :] = np.interp(phase, cycle_phases, cycle_data)
-        
-        # 创建网格
-        X, Y = np.meshgrid(phase, cycles)
-        
-        # 绘制3D表面
-        surf = self.canvas.axes_3d.plot_surface(X, Y, z_data, cmap='viridis', 
-                                           edgecolor='none', alpha=0.8)
-        
-        # 添加颜色条
-        # self.canvas.fig.colorbar(surf, ax=self.canvas.axes_3d, shrink=0.5, aspect=5)
-        
-        # 设置图表标题和轴标签
-        self.canvas.axes_3d.set_title("GIS局部放电PRPS图")
-        self.canvas.axes_3d.set_xlabel("相位 (0~360°)")
-        self.canvas.axes_3d.set_ylabel("周期")
-        self.canvas.axes_3d.set_zlabel("幅值 (V)")
-        
-        # 设置视角
-        self.canvas.axes_3d.view_init(elev=30, azim=45)
+        self.need_redraw = False
     
     def update_status(self):
         """更新状态信息"""
