@@ -36,7 +36,6 @@ class MplCanvas(FigureCanvas):
         self.axes.grid(True, linestyle='--', alpha=0.7)
         self.scatter = None
         self.line = None
-        self.bars = None
 
 class MQTTThread(QThread):
     """MQTT处理线程，避免阻塞主线程"""
@@ -166,6 +165,11 @@ class MainWindow(QMainWindow):
         self.last_update_time = time.time()
         self.update_interval = 0.2  # 控制更新频率，每0.2秒更新一次
         
+        # 周期数据存储
+        self.cycle_count = 1  # 当前周期计数
+        self.max_cycles = 10  # 默认最大周期数
+        self.accumulated_data = []  # 累积的数据
+        
         # 创建MQTT客户端
         self.mqtt_client = MQTTClient()
         self.mqtt_client.message_received.connect(self.update_plot)
@@ -228,7 +232,7 @@ class MainWindow(QMainWindow):
         # 添加图表类型选择
         chart_settings_layout.addWidget(QLabel("图表类型:"), 0, 0)
         self.chart_type_combo = QComboBox()
-        self.chart_type_combo.addItems(["散点图", "线图", "柱状图"])
+        self.chart_type_combo.addItems(["散点图", "线图"])  # 移除柱状图选项
         self.chart_type_combo.currentIndexChanged.connect(self.update_plot_type)
         chart_settings_layout.addWidget(self.chart_type_combo, 0, 1)
         
@@ -240,10 +244,28 @@ class MainWindow(QMainWindow):
         self.buffer_size_spin.valueChanged.connect(self.update_buffer_size)
         chart_settings_layout.addWidget(self.buffer_size_spin, 0, 3)
         
+        # 添加周期数设置
+        chart_settings_layout.addWidget(QLabel("累积周期数:"), 1, 0)
+        self.cycles_spin = QSpinBox()
+        self.cycles_spin.setRange(1, 800)
+        self.cycles_spin.setValue(self.max_cycles)
+        self.cycles_spin.valueChanged.connect(self.update_max_cycles)
+        chart_settings_layout.addWidget(self.cycles_spin, 1, 1)
+        
+        # 添加周期计数显示
+        chart_settings_layout.addWidget(QLabel("当前周期:"), 1, 2)
+        self.cycle_count_label = QLabel(f"{self.cycle_count}/{self.max_cycles}")
+        chart_settings_layout.addWidget(self.cycle_count_label, 1, 3)
+        
         # 添加清除数据按钮
         self.clear_button = QPushButton("清除数据")
         self.clear_button.clicked.connect(self.clear_data)
         chart_settings_layout.addWidget(self.clear_button, 0, 4)
+        
+        # 添加重置周期按钮
+        self.reset_cycles_button = QPushButton("重置周期")
+        self.reset_cycles_button.clicked.connect(self.reset_cycles)
+        chart_settings_layout.addWidget(self.reset_cycles_button, 1, 4)
         
         chart_settings_group.setLayout(chart_settings_layout)
         main_layout.addWidget(chart_settings_group)
@@ -298,6 +320,26 @@ class MainWindow(QMainWindow):
             self.need_redraw = True
         self.data_mutex.unlock()
     
+    def update_max_cycles(self, cycles):
+        """更新最大周期数"""
+        self.max_cycles = cycles
+        self.cycle_count_label.setText(f"{self.cycle_count}/{self.max_cycles}")
+        
+        # 如果当前累积的数据周期数超过新设置的最大周期数，则截取最新的周期数据
+        if len(self.accumulated_data) > self.max_cycles:
+            self.accumulated_data = self.accumulated_data[-self.max_cycles:]
+            self.need_redraw = True
+    
+    def reset_cycles(self):
+        """重置周期计数和累积数据"""
+        self.data_mutex.lock()
+        self.cycle_count = 1
+        self.accumulated_data = []
+        self.cycle_count_label.setText(f"{self.cycle_count}/{self.max_cycles}")
+        self.need_redraw = True
+        self.data_mutex.unlock()
+        self.status_bar.showMessage("周期已重置", 2000)
+    
     def update_plot_type(self):
         """更新图表类型"""
         self.need_redraw = True
@@ -306,12 +348,14 @@ class MainWindow(QMainWindow):
         """清除数据"""
         self.data_mutex.lock()
         self.data_buffer = []
+        self.accumulated_data = []
+        self.cycle_count = 1
+        self.cycle_count_label.setText(f"{self.cycle_count}/{self.max_cycles}")
         self.data_mutex.unlock()
         self.canvas.axes.clear()
         self.canvas.axes.grid(True, linestyle='--', alpha=0.7)
         self.canvas.scatter = None
         self.canvas.line = None
-        self.canvas.bars = None
         self.canvas.draw()
         self.data_count_label.setText("数据点: 0")
     
@@ -322,13 +366,30 @@ class MainWindow(QMainWindow):
         # 更新数据缓冲区
         self.data_mutex.lock()
         self.data_buffer = data
+        
+        # 处理周期数据
+        # 每收到一次数据视为一个周期
+        if len(data) > 0:
+            # 添加新周期数据
+            self.accumulated_data.append(data)
+            
+            # 如果累积的周期数超过最大周期数，则移除最早的周期数据
+            if len(self.accumulated_data) > self.max_cycles:
+                self.accumulated_data.pop(0)
+            
+            # 更新周期计数
+            self.cycle_count = min(self.cycle_count + 1, self.max_cycles)
+            self.cycle_count_label.setText(f"{self.cycle_count}/{self.max_cycles}")
+        
         if len(self.data_buffer) > self.max_buffer_size:
             self.data_buffer = self.data_buffer[-self.max_buffer_size:]
+        
         self.need_redraw = True
         self.data_mutex.unlock()
         
         # 更新数据点数量标签
-        self.data_count_label.setText(f"数据点: {len(data)}")
+        total_points = sum(len(cycle_data) for cycle_data in self.accumulated_data)
+        self.data_count_label.setText(f"数据点: {total_points}")
     
     def redraw_plot(self):
         """重绘图表，由定时器触发"""
@@ -336,32 +397,50 @@ class MainWindow(QMainWindow):
             return
             
         self.data_mutex.lock()
-        data_to_plot = self.data_buffer.copy()
+        accumulated_data_copy = self.accumulated_data.copy()
         self.data_mutex.unlock()
         
-        if not data_to_plot:
+        if not accumulated_data_copy:
             return
             
-        # 创建X轴数据（相位）
-        x_data = np.linspace(0, 360, len(data_to_plot))
+        # 清除当前图表
+        self.canvas.axes.clear()
         
         # 根据选择的图表类型绘制
         chart_type = self.chart_type_combo.currentText()
         
-        # 清除当前图表
-        self.canvas.axes.clear()
+        # 合并所有周期的数据用于绘图
+        all_data = []
+        for cycle_data in accumulated_data_copy:
+            all_data.extend(cycle_data)
+        
+        if not all_data:
+            return
+            
+        # 创建X轴数据（相位）
+        # 对于累积数据，我们需要为每个周期的每个数据点分配相位值
+        phase_per_cycle = 360  # 每个周期的相位范围
+        x_data = []
+        
+        for i, cycle_data in enumerate(accumulated_data_copy):
+            cycle_phases = np.linspace(0, phase_per_cycle, len(cycle_data))
+            x_data.extend(cycle_phases)
         
         if chart_type == "散点图":
-            self.canvas.axes.scatter(x_data, data_to_plot, alpha=0.7, s=10)
+            self.canvas.axes.scatter(x_data, all_data, alpha=0.7, s=10)
         elif chart_type == "线图":
-            self.canvas.axes.plot(x_data, data_to_plot, linewidth=1.0)
-        elif chart_type == "柱状图":
-            # 对于柱状图，减少柱子数量以提高性能
-            step = max(1, len(data_to_plot) // 100)  # 最多显示100个柱子
-            self.canvas.axes.bar(x_data[::step], data_to_plot[::step], width=360/len(data_to_plot)*step)
+            # 对于线图，我们可能需要按周期分别绘制
+            for i, cycle_data in enumerate(accumulated_data_copy):
+                cycle_phases = np.linspace(0, phase_per_cycle, len(cycle_data))
+                self.canvas.axes.plot(cycle_phases, cycle_data, linewidth=1.0, 
+                                     label=f"周期 {i+1}")
+            # 如果周期数较多，可以选择不显示图例
+            if len(accumulated_data_copy) <= 10:
+                self.canvas.axes.legend(loc='upper right')
         
         # 设置图表标题和轴标签
-        self.canvas.axes.set_title("GIS局部放电PRPD图")
+        cycle_info = f"({self.cycle_count}/{self.max_cycles}周期)"
+        self.canvas.axes.set_title(f"GIS局部放电PRPD图 {cycle_info}")
         self.canvas.axes.set_xlabel("相位 (0~360°)")
         self.canvas.axes.set_ylabel("幅值 (V)")
         
