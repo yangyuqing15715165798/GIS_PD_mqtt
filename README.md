@@ -14,6 +14,9 @@
 - 优化的图表绘制策略，减少UI卡顿
 - 线程安全的数据访问机制
 
+![image](https://github.com/user-attachments/assets/f33521ad-5467-4829-aa53-b996937ea39c)
+![image](https://github.com/user-attachments/assets/9fc7e4f3-171f-4c80-a2cf-5e00924b5e8e)
+
 ## 技术实现
 
 - **PySide6**: 用于构建现代化GUI界面
