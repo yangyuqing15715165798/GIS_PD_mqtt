@@ -15,6 +15,9 @@
 - 线程安全的数据访问机制
 - 支持数据周期累积显示，可自定义累积周期数
 
+![image](https://github.com/user-attachments/assets/f33521ad-5467-4829-aa53-b996937ea39c)
+![image](https://github.com/user-attachments/assets/9fc7e4f3-171f-4c80-a2cf-5e00924b5e8e)
+
 ## 技术实现
 
 - **PySide6**: 用于构建现代化GUI界面
