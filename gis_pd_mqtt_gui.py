@@ -9,12 +9,17 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                               QGroupBox, QGridLayout, QSpinBox, QComboBox, 
-                              QStatusBar, QMessageBox, QCheckBox, QDoubleSpinBox)
-from PySide6.QtCore import Qt, QTimer, Signal, Slot, QThread, QMutex
+                              QStatusBar, QMessageBox, QCheckBox, QDoubleSpinBox,
+                              QTableWidget, QTableWidgetItem, QDialog, QDateTimeEdit,
+                              QScrollArea)
+from PySide6.QtCore import Qt, QTimer, Signal, Slot, QThread, QMutex, QDateTime
 from matplotlib import rcParams
 from mpl_toolkits.mplot3d import Axes3D
 import time
 import queue
+import sqlite3
+import os
+import datetime
 
 # 设置matplotlib中文支持
 rcParams['font.sans-serif'] = ['SimHei']  # 设置中文字体支持
@@ -24,6 +29,192 @@ rcParams['axes.unicode_minus'] = False  # 解决负号显示问题
 matplotlib.rcParams['path.simplify'] = True
 matplotlib.rcParams['path.simplify_threshold'] = 1.0
 matplotlib.rcParams['agg.path.chunksize'] = 10000
+
+class DatabaseManager:
+    """数据库管理类，负责数据库的连接、创建表和数据存储"""
+    def __init__(self, db_name="gis_pd_data.db"):
+        """初始化数据库连接"""
+        # 数据库文件路径
+        self.db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), db_name)
+        self.conn = None
+        self.cursor = None
+        self.connected = False
+        
+        # 创建数据库连接，使用check_same_thread=False允许在不同线程中使用
+        try:
+            self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self.cursor = self.conn.cursor()
+            self.connected = True
+            
+            # 创建数据表
+            self.create_tables()
+            
+            print(f"数据库连接成功: {self.db_path}")
+        except sqlite3.Error as e:
+            print(f"数据库连接错误: {str(e)}")
+    
+    def create_tables(self):
+        """创建必要的数据表"""
+        if not self.connected:
+            return
+            
+        try:
+            # 创建周期数据表
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS cycle_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    cycle_number INTEGER NOT NULL,
+                    data BLOB NOT NULL
+                )
+            ''')
+            
+            # 创建原始数据表
+            self.cursor.execute('''
+                CREATE TABLE IF NOT EXISTS raw_data (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    broker TEXT NOT NULL,
+                    topic TEXT NOT NULL,
+                    raw_data BLOB NOT NULL
+                )
+            ''')
+            
+            self.conn.commit()
+        except sqlite3.Error as e:
+            print(f"创建数据表错误: {str(e)}")
+    
+    def save_cycle_data(self, cycle_number, data):
+        """保存周期数据"""
+        if not self.connected:
+            return
+            
+        try:
+            # 将数据列表转换为字符串存储
+            data_str = ','.join(map(str, data))
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+            
+            self.cursor.execute(
+                "INSERT INTO cycle_data (timestamp, cycle_number, data) VALUES (?, ?, ?)",
+                (timestamp, cycle_number, data_str)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"保存周期数据错误: {str(e)}")
+            return False
+    
+    def save_raw_data(self, broker, topic, raw_data):
+        """保存原始数据"""
+        if not self.connected:
+            return
+            
+        try:
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+            
+            self.cursor.execute(
+                "INSERT INTO raw_data (timestamp, broker, topic, raw_data) VALUES (?, ?, ?, ?)",
+                (timestamp, broker, topic, raw_data)
+            )
+            self.conn.commit()
+            return True
+        except sqlite3.Error as e:
+            print(f"保存原始数据错误: {str(e)}")
+            return False
+    
+    def get_cycle_data(self, limit=100, offset=0):
+        """获取周期数据"""
+        if not self.connected:
+            return []
+            
+        try:
+            self.cursor.execute(
+                "SELECT * FROM cycle_data ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                (limit, offset)
+            )
+            return self.cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"获取周期数据错误: {str(e)}")
+            return []
+    
+    def get_raw_data(self, limit=100, offset=0):
+        """获取原始数据"""
+        if not self.connected:
+            return []
+            
+        try:
+            self.cursor.execute(
+                "SELECT * FROM raw_data ORDER BY timestamp DESC LIMIT ? OFFSET ?",
+                (limit, offset)
+            )
+            return self.cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"获取原始数据错误: {str(e)}")
+            return []
+    
+    def get_cycle_count(self):
+        """获取周期数据总数"""
+        if not self.connected:
+            return 0
+            
+        try:
+            self.cursor.execute("SELECT COUNT(*) FROM cycle_data")
+            return self.cursor.fetchone()[0]
+        except sqlite3.Error as e:
+            print(f"获取周期数据总数错误: {str(e)}")
+            return 0
+    
+    def get_raw_count(self):
+        """获取原始数据总数"""
+        if not self.connected:
+            return 0
+            
+        try:
+            self.cursor.execute("SELECT COUNT(*) FROM raw_data")
+            return self.cursor.fetchone()[0]
+        except sqlite3.Error as e:
+            print(f"获取原始数据总数错误: {str(e)}")
+            return 0
+    
+    def get_latest_cycle_data(self, count=1):
+        """获取最新的周期数据"""
+        if not self.connected:
+            return []
+            
+        try:
+            self.cursor.execute(
+                "SELECT * FROM cycle_data ORDER BY timestamp DESC LIMIT ?",
+                (count,)
+            )
+            return self.cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"获取最新周期数据错误: {str(e)}")
+            return []
+    
+    def get_cycle_data_by_time(self, start_time, end_time):
+        """根据时间范围获取周期数据"""
+        if not self.connected:
+            return []
+            
+        try:
+            self.cursor.execute(
+                "SELECT * FROM cycle_data WHERE timestamp BETWEEN ? AND ? ORDER BY timestamp",
+                (start_time, end_time)
+            )
+            return self.cursor.fetchall()
+        except sqlite3.Error as e:
+            print(f"根据时间范围获取周期数据错误: {str(e)}")
+            return []
+    
+    def close(self):
+        """关闭数据库连接"""
+        if self.connected:
+            try:
+                self.conn.close()
+                self.connected = False
+                print("数据库连接已关闭")
+            except sqlite3.Error as e:
+                print(f"关闭数据库连接错误: {str(e)}")
 
 class MplCanvas(FigureCanvas):
     """Matplotlib画布类，用于在Qt界面中嵌入matplotlib图形"""
@@ -89,6 +280,7 @@ class MQTTClient(QWidget):
     """MQTT客户端类，处理MQTT连接和消息接收"""
     message_received = Signal(list)  # 信号：接收到新消息时发出
     connection_status = Signal(bool, str)  # 信号：连接状态变化时发出
+    raw_data_received = Signal(str, str, str)  # 信号：接收到原始数据时发出，传递broker、topic和数据
 
     def __init__(self):
         super().__init__()
@@ -104,10 +296,17 @@ class MQTTClient(QWidget):
         self.mqtt_thread = None
         self.message_queue = queue.Queue(maxsize=10)  # 限制队列大小，避免内存溢出
         
+        # 数据库管理器
+        self.db_manager = None
+        
         # 创建一个定时器来处理消息队列
         self.queue_timer = QTimer()
         self.queue_timer.timeout.connect(self.process_message_queue)
         self.queue_timer.start(50)  # 每50ms处理一次队列
+
+    def set_database_manager(self, db_manager):
+        """设置数据库管理器"""
+        self.db_manager = db_manager
 
     def connect_to_broker(self, broker_address, broker_port, topic):
         """连接到MQTT Broker"""
@@ -214,6 +413,12 @@ class MQTTClient(QWidget):
         """消息接收回调函数"""
         try:
             hex_message = msg.payload.hex()  # 解码消息内容为十六进制字符串
+            
+            # 发出原始数据信号，让主线程处理数据库保存
+            if hasattr(self, 'db_manager') and self.db_manager is not None:
+                # 使用信号将原始数据发送到主线程，而不是直接在MQTT线程中保存
+                self.raw_data_received.emit(self.broker_address, self.topic, hex_message)
+                
             results = []
             for i in range(0, len(hex_message), 4):  # 每4个字符解析为一个16进制数
                 if i + 4 <= len(hex_message):
@@ -233,6 +438,266 @@ class MQTTClient(QWidget):
                 
         except Exception as e:
             print(f"消息处理错误: {str(e)}")
+
+class DatabaseViewDialog(QDialog):
+    """数据库查看对话框"""
+    def __init__(self, db_manager, parent=None):
+        super().__init__(parent)
+        self.db_manager = db_manager
+        self.setWindowTitle("数据库数据查看")
+        self.setMinimumSize(800, 600)
+        
+        # 创建布局
+        layout = QVBoxLayout(self)
+        
+        # 创建查询选项组
+        query_group = QGroupBox("查询选项")
+        query_layout = QGridLayout()
+        
+        # 添加数据类型选择
+        query_layout.addWidget(QLabel("数据类型:"), 0, 0)
+        self.data_type_combo = QComboBox()
+        self.data_type_combo.addItems(["周期数据", "原始数据"])
+        query_layout.addWidget(self.data_type_combo, 0, 1)
+        
+        # 添加查询类型选择
+        query_layout.addWidget(QLabel("查询类型:"), 0, 2)
+        self.query_type_combo = QComboBox()
+        self.query_type_combo.addItems(["最新数据", "按时间范围"])
+        self.query_type_combo.currentIndexChanged.connect(self.toggle_query_mode)
+        query_layout.addWidget(self.query_type_combo, 0, 3)
+        
+        # 添加最新数据数量选择
+        query_layout.addWidget(QLabel("最新数据数量:"), 1, 0)
+        self.limit_spin = QSpinBox()
+        self.limit_spin.setRange(1, 1000)
+        self.limit_spin.setValue(100)
+        query_layout.addWidget(self.limit_spin, 1, 1)
+        
+        # 添加开始时间选择
+        query_layout.addWidget(QLabel("开始时间:"), 1, 2)
+        self.start_time_edit = QDateTimeEdit()
+        self.start_time_edit.setDateTime(QDateTime.currentDateTime().addDays(-1))  # 默认为当前时间的前一天
+        self.start_time_edit.setCalendarPopup(True)
+        self.start_time_edit.setEnabled(False)  # 默认禁用
+        query_layout.addWidget(self.start_time_edit, 1, 3)
+        
+        # 添加结束时间选择
+        query_layout.addWidget(QLabel("结束时间:"), 1, 4)
+        self.end_time_edit = QDateTimeEdit()
+        self.end_time_edit.setDateTime(QDateTime.currentDateTime())  # 默认为当前时间
+        self.end_time_edit.setCalendarPopup(True)
+        self.end_time_edit.setEnabled(False)  # 默认禁用
+        query_layout.addWidget(self.end_time_edit, 1, 5)
+        
+        # 添加查询按钮
+        self.query_button = QPushButton("查询")
+        self.query_button.clicked.connect(self.query_data)
+        query_layout.addWidget(self.query_button, 0, 5)
+        
+        query_group.setLayout(query_layout)
+        layout.addWidget(query_group)
+        
+        # 创建数据表格
+        self.table = QTableWidget()
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.doubleClicked.connect(self.show_data_details)
+        layout.addWidget(self.table)
+        
+        # 创建状态标签
+        self.status_label = QLabel()
+        layout.addWidget(self.status_label)
+        
+        # 存储查询结果
+        self.query_results = []
+        
+        # 初始查询
+        self.query_data()
+    
+    def toggle_query_mode(self, index):
+        """切换查询模式"""
+        is_time_range = (index == 1)
+        self.start_time_edit.setEnabled(is_time_range)
+        self.end_time_edit.setEnabled(is_time_range)
+        self.limit_spin.setEnabled(not is_time_range)
+    
+    def show_data_details(self, index):
+        """显示数据详情"""
+        row = index.row()
+        if row < 0 or row >= len(self.query_results):
+            return
+            
+        # 获取数据
+        data_row = self.query_results[row]
+        data_type = self.data_type_combo.currentText()
+        
+        # 创建详情对话框
+        detail_dialog = QDialog(self)
+        detail_dialog.setWindowTitle("数据详情")
+        detail_dialog.setMinimumSize(600, 400)
+        
+        layout = QVBoxLayout(detail_dialog)
+        
+        if data_type == "周期数据":
+            # 显示周期数据详情
+            id_label = QLabel(f"ID: {data_row[0]}")
+            timestamp_label = QLabel(f"时间戳: {data_row[1]}")
+            cycle_label = QLabel(f"周期编号: {data_row[2]}")
+            
+            layout.addWidget(id_label)
+            layout.addWidget(timestamp_label)
+            layout.addWidget(cycle_label)
+            
+            # 显示数据
+            data_group = QGroupBox("数据内容")
+            data_layout = QVBoxLayout()
+            
+            data_str = data_row[3]
+            data_points = data_str.split(',')
+            
+            # 创建数据表格
+            data_table = QTableWidget()
+            data_table.setColumnCount(2)
+            data_table.setHorizontalHeaderLabels(["序号", "值"])
+            data_table.setRowCount(len(data_points))
+            
+            for i, point in enumerate(data_points):
+                data_table.setItem(i, 0, QTableWidgetItem(str(i)))
+                data_table.setItem(i, 1, QTableWidgetItem(point))
+            
+            data_layout.addWidget(data_table)
+            data_group.setLayout(data_layout)
+            layout.addWidget(data_group)
+            
+        else:  # 原始数据
+            # 显示原始数据详情
+            id_label = QLabel(f"ID: {data_row[0]}")
+            timestamp_label = QLabel(f"时间戳: {data_row[1]}")
+            broker_label = QLabel(f"Broker: {data_row[2]}")
+            topic_label = QLabel(f"主题: {data_row[3]}")
+            
+            layout.addWidget(id_label)
+            layout.addWidget(timestamp_label)
+            layout.addWidget(broker_label)
+            layout.addWidget(topic_label)
+            
+            # 显示原始数据
+            data_group = QGroupBox("原始数据")
+            data_layout = QVBoxLayout()
+            
+            raw_data = str(data_row[4])
+            data_text = QLabel(raw_data)
+            data_text.setWordWrap(True)
+            data_text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            
+            # 添加滚动区域
+            scroll_area = QWidget()
+            scroll_layout = QVBoxLayout(scroll_area)
+            scroll_layout.addWidget(data_text)
+            scroll_layout.addStretch()
+            
+            scroll = QScrollArea()
+            scroll.setWidget(scroll_area)
+            scroll.setWidgetResizable(True)
+            
+            data_layout.addWidget(scroll)
+            data_group.setLayout(data_layout)
+            layout.addWidget(data_group)
+        
+        # 添加关闭按钮
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(detail_dialog.accept)
+        layout.addWidget(close_button)
+        
+        detail_dialog.exec()
+    
+    def query_data(self):
+        """根据选择的选项查询数据"""
+        data_type = self.data_type_combo.currentText()
+        query_type = self.query_type_combo.currentText()
+        limit = self.limit_spin.value()
+        
+        # 获取时间范围
+        start_time = self.start_time_edit.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+        end_time = self.end_time_edit.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+        
+        # 清空表格和结果
+        self.table.clear()
+        self.table.setRowCount(0)
+        self.query_results = []
+        
+        if not self.db_manager or not self.db_manager.connected:
+            self.status_label.setText("数据库未连接")
+            return
+        
+        try:
+            # 根据数据类型查询
+            if data_type == "周期数据":
+                # 设置表头
+                self.table.setColumnCount(4)
+                self.table.setHorizontalHeaderLabels(["ID", "时间戳", "周期编号", "数据(前10个点)"])
+                
+                # 查询数据
+                data = []
+                if query_type == "最新数据":
+                    data = self.db_manager.get_latest_cycle_data(limit)
+                else:  # 按时间范围
+                    data = self.db_manager.get_cycle_data_by_time(start_time, end_time)
+                
+                # 保存查询结果
+                self.query_results = data
+                
+                # 填充表格
+                self.table.setRowCount(len(data))
+                for i, row in enumerate(data):
+                    self.table.setItem(i, 0, QTableWidgetItem(str(row[0])))
+                    self.table.setItem(i, 1, QTableWidgetItem(str(row[1])))
+                    self.table.setItem(i, 2, QTableWidgetItem(str(row[2])))
+                    
+                    # 显示数据的前10个点
+                    data_str = row[3]
+                    data_points = data_str.split(',')
+                    preview = ','.join(data_points[:10])
+                    if len(data_points) > 10:
+                        preview += "..."
+                    self.table.setItem(i, 3, QTableWidgetItem(preview))
+                
+                self.status_label.setText(f"已查询到 {len(data)} 条周期数据")
+            
+            else:  # 原始数据
+                # 设置表头
+                self.table.setColumnCount(5)
+                self.table.setHorizontalHeaderLabels(["ID", "时间戳", "Broker", "主题", "原始数据(前30个字符)"])
+                
+                # 查询数据
+                data = self.db_manager.get_raw_data(limit)
+                
+                # 保存查询结果
+                self.query_results = data
+                
+                # 填充表格
+                self.table.setRowCount(len(data))
+                for i, row in enumerate(data):
+                    self.table.setItem(i, 0, QTableWidgetItem(str(row[0])))
+                    self.table.setItem(i, 1, QTableWidgetItem(str(row[1])))
+                    self.table.setItem(i, 2, QTableWidgetItem(str(row[2])))
+                    self.table.setItem(i, 3, QTableWidgetItem(str(row[3])))
+                    
+                    # 显示原始数据的前30个字符
+                    raw_data = str(row[4])
+                    preview = raw_data[:30]
+                    if len(raw_data) > 30:
+                        preview += "..."
+                    self.table.setItem(i, 4, QTableWidgetItem(preview))
+                
+                self.status_label.setText(f"已查询到 {len(data)} 条原始数据")
+            
+            # 调整列宽
+            self.table.resizeColumnsToContents()
+            
+        except Exception as e:
+            self.status_label.setText(f"查询数据错误: {str(e)}")
 
 class MainWindow(QMainWindow):
     """主窗口类"""
@@ -270,10 +735,16 @@ class MainWindow(QMainWindow):
         self.show_sine_wave = True  # 是否显示参考正弦波
         self.sine_amplitude = 1.0  # 参考正弦波振幅
         
+        # 数据库设置
+        self.save_to_db = True  # 默认保存数据到数据库
+        self.db_manager = DatabaseManager()  # 创建数据库管理器
+        
         # 创建MQTT客户端
         self.mqtt_client = MQTTClient()
+        self.mqtt_client.set_database_manager(self.db_manager)  # 设置数据库管理器
         self.mqtt_client.message_received.connect(self.update_plot)
         self.mqtt_client.connection_status.connect(self.update_connection_status)
+        self.mqtt_client.raw_data_received.connect(self.save_raw_data)  # 连接原始数据信号
         
         # 创建界面
         self.setup_ui()
@@ -407,6 +878,12 @@ class MainWindow(QMainWindow):
         self.color_scheme_combo.currentTextChanged.connect(self.update_color_scheme)
         chart_settings_layout.addWidget(self.color_scheme_combo, 4, 1)
         
+        # 添加数据库保存选项
+        self.save_db_checkbox = QCheckBox("保存数据到数据库")
+        self.save_db_checkbox.setChecked(self.save_to_db)
+        self.save_db_checkbox.stateChanged.connect(self.toggle_db_save)
+        chart_settings_layout.addWidget(self.save_db_checkbox, 4, 3)
+        
         # 添加显示3D图选项
         self.show_3d_checkbox = QCheckBox("显示PRPS三维图")
         self.show_3d_checkbox.setChecked(self.show_3d_plot)
@@ -422,6 +899,11 @@ class MainWindow(QMainWindow):
         self.reset_cycles_button = QPushButton("重置周期")
         self.reset_cycles_button.clicked.connect(self.reset_cycles)
         chart_settings_layout.addWidget(self.reset_cycles_button, 1, 4)
+        
+        # 添加查看数据库按钮
+        self.view_db_button = QPushButton("查看数据库")
+        self.view_db_button.clicked.connect(self.show_database_view)
+        chart_settings_layout.addWidget(self.view_db_button, 4, 4)
         
         chart_settings_group.setLayout(chart_settings_layout)
         main_layout.addWidget(chart_settings_group)
@@ -590,6 +1072,13 @@ class MainWindow(QMainWindow):
             # 更新周期计数
             self.cycle_count = min(self.cycle_count + 1, self.max_cycles)
             self.cycle_count_label.setText(f"{self.cycle_count}/{self.max_cycles}")
+            
+            # 保存周期数据到数据库（确保在主线程中执行）
+            if self.save_to_db and self.db_manager is not None:
+                try:
+                    self.db_manager.save_cycle_data(self.cycle_count, data)
+                except Exception as e:
+                    print(f"保存周期数据错误: {str(e)}")
         
         if len(self.data_buffer) > self.max_buffer_size:
             self.data_buffer = self.data_buffer[-self.max_buffer_size:]
@@ -775,13 +1264,34 @@ class MainWindow(QMainWindow):
     
     def update_status(self):
         """更新状态信息"""
-        # 这里可以添加其他需要定时更新的状态信息
-        pass
+        # 更新数据库状态
+        if self.db_manager is not None and self.db_manager.connected:
+            cycle_count = self.db_manager.get_cycle_count()
+            raw_count = self.db_manager.get_raw_count()
+            db_status = f"数据库: 已连接 (周期数据: {cycle_count}, 原始数据: {raw_count})"
+            
+            # 检查是否正在保存数据
+            if self.save_to_db:
+                db_status += " [数据保存已启用]"
+            else:
+                db_status += " [数据保存已禁用]"
+                
+            # 更新状态栏
+            if hasattr(self, 'db_status_label'):
+                self.db_status_label.setText(db_status)
+            else:
+                self.db_status_label = QLabel(db_status)
+                self.status_bar.addPermanentWidget(self.db_status_label)
     
     def closeEvent(self, event):
         """关闭窗口事件"""
         # 断开MQTT连接
         self.mqtt_client.disconnect_from_broker()
+        
+        # 关闭数据库连接
+        if self.db_manager is not None:
+            self.db_manager.close()
+            
         event.accept()
 
     def update_color_scheme(self, scheme_name):
@@ -799,6 +1309,27 @@ class MainWindow(QMainWindow):
         """更新参考正弦波的振幅"""
         self.sine_amplitude = amplitude
         self.need_redraw = True
+
+    def toggle_db_save(self, state):
+        """切换是否保存数据到数据库"""
+        self.save_to_db = (state == Qt.CheckState.Checked.value)
+        self.need_redraw = True
+
+    def save_raw_data(self, broker, topic, raw_data):
+        """保存原始数据到数据库（在主线程中执行）"""
+        if self.save_to_db and self.db_manager is not None:
+            try:
+                self.db_manager.save_raw_data(broker, topic, raw_data)
+            except Exception as e:
+                print(f"保存原始数据错误（主线程）: {str(e)}")
+
+    def show_database_view(self):
+        """显示数据库查看对话框"""
+        if self.db_manager is not None and self.db_manager.connected:
+            dialog = DatabaseViewDialog(self.db_manager, self)
+            dialog.exec()
+        else:
+            QMessageBox.warning(self, "数据库未连接", "数据库未连接或连接失败，无法查看数据。")
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
