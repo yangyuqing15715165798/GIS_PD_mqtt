@@ -31,7 +31,7 @@ def on_message(client, userdata, msg):
     print(f"收到消息: {meaningful_data}，主题: {msg.topic}")
     plt.scatter(np.linspace(0, 360, len(meaningful_data)), meaningful_data)
     plt.xlabel("相位 (0~360)")
-    plt.ylabel("数据值")
+    plt.ylabel("幅值 (mV)")
     plt.title("实时数据散点图")
     plt.pause(0.1)
 
