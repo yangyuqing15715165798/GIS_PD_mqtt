@@ -241,7 +241,7 @@ class MplCanvas(FigureCanvas):
         # 3D图设置
         if self.axes_3d:
             self.axes_3d.set_title("PRPS图")
-            self.axes_3d.set_xlabel("相位 (0~360°)")
+            self.axes_3d.set_xlabel("相位")
             self.axes_3d.set_ylabel("周期")
             self.axes_3d.set_zlabel(unit_label)
             self.surface = None
@@ -995,7 +995,7 @@ class HistoricalChartsDialog(QDialog):
         
         # 设置图表标题和轴标签
         self.axes_2d.set_title(f"PRPD图 ({len(all_data)}个周期)")
-        self.axes_2d.set_xlabel("相位 (0~360°)")
+        self.axes_2d.set_xlabel("相位")
         self.axes_2d.set_ylabel(self.unit_label)
         
         # 设置网格
@@ -1067,7 +1067,7 @@ class HistoricalChartsDialog(QDialog):
         
         # 设置图表标题和轴标签
         self.axes_3d.set_title(f"历史PRPS图 ({num_cycles}个周期)")
-        self.axes_3d.set_xlabel("相位 (0~360°)")
+        self.axes_3d.set_xlabel("相位")
         self.axes_3d.set_ylabel("周期")
         self.axes_3d.set_zlabel(self.unit_label)
         
@@ -1467,7 +1467,7 @@ class MainWindow(QMainWindow):
         if self.canvas.axes_3d:
             self.canvas.axes_3d.clear()
             self.canvas.axes_3d.set_title("PRPS图")
-            self.canvas.axes_3d.set_xlabel("相位 (0~360°)")
+            self.canvas.axes_3d.set_xlabel("相位")
             self.canvas.axes_3d.set_ylabel("周期")
             self.canvas.axes_3d.set_zlabel(self.unit_label)
             self.canvas.surface = None
@@ -1620,7 +1620,7 @@ class MainWindow(QMainWindow):
         # 设置图表标题和轴标签
         cycle_info = f"({len(prpd_data)}/{self.max_cycles}周期)"
         self.canvas.axes_2d.set_title(f"PRPD图 {cycle_info}")
-        self.canvas.axes_2d.set_xlabel("相位 (0~360°)")
+        self.canvas.axes_2d.set_xlabel("相位")
         self.canvas.axes_2d.set_ylabel(self.unit_label)
         
         # 设置网格
@@ -1692,7 +1692,7 @@ class MainWindow(QMainWindow):
         
         # 设置图表标题和轴标签
         self.canvas.axes_3d.set_title(f"PRPS图 ({num_cycles}个周期)")
-        self.canvas.axes_3d.set_xlabel("相位 (0~360°)")
+        self.canvas.axes_3d.set_xlabel("相位")
         self.canvas.axes_3d.set_ylabel("周期")
         self.canvas.axes_3d.set_zlabel(self.unit_label)
         
