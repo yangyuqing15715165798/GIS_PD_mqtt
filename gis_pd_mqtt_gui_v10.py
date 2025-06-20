@@ -994,7 +994,7 @@ class HistoricalChartsDialog(QDialog):
             self.axes_2d.plot(x_sine, y_sine, 'r-', linewidth=1.5, alpha=0.7, label="参考正弦波")
         
         # 设置图表标题和轴标签
-        self.axes_2d.set_title(f"历史PRPD图 ({len(all_data)}个周期)")
+        self.axes_2d.set_title(f"PRPD图 ({len(all_data)}个周期)")
         self.axes_2d.set_xlabel("相位 (0~360°)")
         self.axes_2d.set_ylabel(self.unit_label)
         
@@ -1005,7 +1005,7 @@ class HistoricalChartsDialog(QDialog):
         """绘制PRPS三维图"""
         # 清除当前3D图并重新创建
         self.figure.delaxes(self.axes_3d)
-        self.axes_3d = self.figure.add_subplot(122, projection='3d')
+        self.axes_3d = self.figure.add_subplot(111, projection='3d')
         
         # 移除之前的颜色条
         try:
@@ -1691,7 +1691,7 @@ class MainWindow(QMainWindow):
         self.canvas.colorbar = self.canvas.fig.colorbar(surf, ax=self.canvas.axes_3d, shrink=0.5, aspect=5)
         
         # 设置图表标题和轴标签
-        self.canvas.axes_3d.set_title(f"历史PRPS图 ({num_cycles}个周期)")
+        self.canvas.axes_3d.set_title(f"PRPS图 ({num_cycles}个周期)")
         self.canvas.axes_3d.set_xlabel("相位 (0~360°)")
         self.canvas.axes_3d.set_ylabel("周期")
         self.canvas.axes_3d.set_zlabel(self.unit_label)
