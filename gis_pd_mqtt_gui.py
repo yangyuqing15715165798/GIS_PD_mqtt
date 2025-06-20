@@ -1592,7 +1592,7 @@ class MainWindow(QMainWindow):
                 self.canvas.axes_2d.plot(cycle_phases, cycle_data, linewidth=1.0, 
                                      label=f"周期 {i+1}")
             # 如果周期数较多，可以选择不显示图例
-            if len(display_data) <= 10:
+            if len(display_data) <= 3:
                 self.canvas.axes_2d.legend(loc='upper right')
         
         # 绘制参考正弦波
