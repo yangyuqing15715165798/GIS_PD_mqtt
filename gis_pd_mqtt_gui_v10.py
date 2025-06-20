@@ -1099,7 +1099,7 @@ class HistoricalChartsDialog(QDialog):
         self.axes_3d.set_zlim(z_min, z_max)
         
         # 设置视角和投影方式
-        self.axes_3d.view_init(elev=30, azim=45)
+        self.axes_3d.view_init(elev=30, azim=270)
         self.axes_3d.set_box_aspect((1.5, 1, 0.8))  # 固定图形纵横比
     
     def export_image(self):
@@ -1724,7 +1724,7 @@ class MainWindow(QMainWindow):
         self.canvas.axes_3d.set_zlim(z_min, z_max)
         
         # 设置视角和投影方式
-        self.canvas.axes_3d.view_init(elev=30, azim=45)
+        self.canvas.axes_3d.view_init(elev=30, azim=270)
         self.canvas.axes_3d.set_box_aspect((1.5, 1, 0.8))  # 固定图形纵横比
     
     def update_status(self):
