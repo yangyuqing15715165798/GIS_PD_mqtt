@@ -6,6 +6,7 @@ import matplotlib
 matplotlib.use('QtAgg')
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                               QHBoxLayout, QLabel, QLineEdit, QPushButton, 
                               QGroupBox, QGridLayout, QSpinBox, QComboBox, 
@@ -20,6 +21,7 @@ import queue
 import sqlite3
 import os
 import datetime
+import csv  # 导入csv模块用于保存CSV文件
 
 # 设置matplotlib中文支持
 rcParams['font.sans-serif'] = ['SimHei']  # 设置中文字体支持
@@ -995,7 +997,7 @@ class HistoricalChartsDialog(QDialog):
         
         # 设置图表标题和轴标签
         self.axes_2d.set_title(f"PRPD图 ({len(all_data)}个周期)")
-        self.axes_2d.set_xlabel("相位")
+        self.axes_2d.set_xlabel("相位 (0~360°)")
         self.axes_2d.set_ylabel(self.unit_label)
         
         # 设置网格
@@ -1067,7 +1069,7 @@ class HistoricalChartsDialog(QDialog):
         
         # 设置图表标题和轴标签
         self.axes_3d.set_title(f"历史PRPS图 ({num_cycles}个周期)")
-        self.axes_3d.set_xlabel("相位")
+        self.axes_3d.set_xlabel("相位 (0~360°)")
         self.axes_3d.set_ylabel("周期")
         self.axes_3d.set_zlabel(self.unit_label)
         
@@ -1147,6 +1149,14 @@ class MainWindow(QMainWindow):
         self.prps_max_cycles = 50  # PRPS图固定显示最新的50个周期
         self.accumulated_data = []  # 累积的数据
         
+        # CSV导出设置
+        self.csv_export_cycles = 50  # 默认导出50个周期数据
+        
+        # 自动保存图像设置
+        self.auto_save_images = False  # 默认不自动保存
+        self.image_save_interval = 5000  # 保存间隔，单位毫秒(5秒)
+        self.last_image_save_time = time.time()
+        
         # 显示设置
         self.show_3d_plot = True  # 是否显示3D图
         self.show_sine_wave = True  # 是否显示参考正弦波
@@ -1180,32 +1190,13 @@ class MainWindow(QMainWindow):
         self.plot_timer.timeout.connect(self.redraw_plot)
         self.plot_timer.start(200)  # 每200ms重绘一次图表
         
+        # 创建定时器用于自动保存图像
+        self.image_save_timer = QTimer()
+        self.image_save_timer.timeout.connect(self.auto_save_image)
+        # 定时器默认不启动，等待用户勾选
+        
         # 标记是否需要重绘
         self.need_redraw = False
-    
-    def create_custom_colormap(self, colors):
-        """
-        根据给定的颜色列表创建自定义颜色映射
-        
-        :param colors: 颜色列表，至少包含4种颜色
-        :return: matplotlib颜色映射对象
-        """
-        import matplotlib.colors as mcolors
-        import matplotlib.pyplot as plt
-        
-        # 确保有足够的颜色
-        if len(colors) < 4:
-            colors = colors + ['#FF0000']  # 默认添加红色
-        
-        # 创建颜色映射
-        n_bins = 100  # 颜色渐变的细腻程度
-        cmap = mcolors.LinearSegmentedColormap.from_list(
-            'custom_colormap', 
-            [mcolors.to_rgba(color) for color in colors[:4]], 
-            N=n_bins
-        )
-        
-        return cmap
     
     def setup_ui(self):
         """设置用户界面"""
@@ -1331,12 +1322,35 @@ class MainWindow(QMainWindow):
         self.view_db_button.clicked.connect(self.show_database_view)
         chart_settings_layout.addWidget(self.view_db_button, 4, 4)
         
+        # 添加保存CSV按钮
+        self.save_csv_button = QPushButton("保存CSV")
+        self.save_csv_button.clicked.connect(self.save_to_csv)
+        chart_settings_layout.addWidget(self.save_csv_button, 3, 4)
+        
+        # 添加自动保存图像选项
+        self.auto_save_checkbox = QCheckBox("自动保存PRPD图")
+        self.auto_save_checkbox.setChecked(self.auto_save_images)
+        self.auto_save_checkbox.stateChanged.connect(self.toggle_auto_save)
+        chart_settings_layout.addWidget(self.auto_save_checkbox, 2, 4)
+        
         chart_settings_group.setLayout(chart_settings_layout)
         main_layout.addWidget(chart_settings_group)
         
         # 创建matplotlib画布
         self.canvas = MplCanvas(self, width=10, height=4, dpi=100, with_3d=self.show_3d_plot, unit_label=self.unit_label)
-        main_layout.addWidget(self.canvas)
+        
+        # 创建matplotlib工具栏
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        
+        # 添加画布和工具栏到布局中
+        canvas_layout = QVBoxLayout()
+        canvas_layout.addWidget(self.toolbar)
+        canvas_layout.addWidget(self.canvas)
+        
+        canvas_widget = QWidget()
+        canvas_widget.setLayout(canvas_layout)
+        
+        main_layout.addWidget(canvas_widget)
         
         # 创建状态栏
         self.status_bar = QStatusBar()
@@ -1358,9 +1372,18 @@ class MainWindow(QMainWindow):
         old_canvas = self.canvas
         self.canvas = MplCanvas(self, width=10, height=4, dpi=100, with_3d=self.show_3d_plot, unit_label=self.unit_label)
         
-        # 替换布局中的画布
-        layout = self.centralWidget().layout()
-        layout.replaceWidget(old_canvas, self.canvas)
+        # 更新工具栏以使用新画布
+        old_toolbar = self.toolbar
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        
+        # 获取包含画布和工具栏的布局
+        canvas_layout = self.centralWidget().layout().itemAt(2).widget().layout()
+        
+        # 替换工具栏和画布
+        canvas_layout.replaceWidget(old_toolbar, self.toolbar)
+        canvas_layout.replaceWidget(old_canvas, self.canvas)
+        
+        old_toolbar.setParent(None)
         old_canvas.setParent(None)
         
         # 强制重绘
@@ -1467,7 +1490,7 @@ class MainWindow(QMainWindow):
         if self.canvas.axes_3d:
             self.canvas.axes_3d.clear()
             self.canvas.axes_3d.set_title("PRPS图")
-            self.canvas.axes_3d.set_xlabel("相位")
+            self.canvas.axes_3d.set_xlabel("相位 (0~360°)")
             self.canvas.axes_3d.set_ylabel("周期")
             self.canvas.axes_3d.set_zlabel(self.unit_label)
             self.canvas.surface = None
@@ -1620,7 +1643,7 @@ class MainWindow(QMainWindow):
         # 设置图表标题和轴标签
         cycle_info = f"({len(prpd_data)}/{self.max_cycles}周期)"
         self.canvas.axes_2d.set_title(f"PRPD图 {cycle_info}")
-        self.canvas.axes_2d.set_xlabel("相位")
+        self.canvas.axes_2d.set_xlabel("相位 (0~360°)")
         self.canvas.axes_2d.set_ylabel(self.unit_label)
         
         # 设置网格
@@ -1724,7 +1747,7 @@ class MainWindow(QMainWindow):
         self.canvas.axes_3d.set_zlim(z_min, z_max)
         
         # 设置视角和投影方式
-        self.canvas.axes_3d.view_init(elev=30, azim=270)
+        # self.canvas.axes_3d.view_init(elev=30, azim=270)
         self.canvas.axes_3d.set_box_aspect((1.5, 1, 0.8))  # 固定图形纵横比
     
     def update_status(self):
@@ -1845,6 +1868,187 @@ class MainWindow(QMainWindow):
                 return self.convert_unit(data, True)
         else:
             return data  # 如果使用毫伏，则不需要转换
+
+    def save_to_csv(self):
+        """保存周期数据到CSV文件"""
+        # 检查是否有足够的数据
+        self.data_mutex.lock()
+        if not self.accumulated_data:
+            self.data_mutex.unlock()
+            QMessageBox.warning(self, "无数据", "没有可用的周期数据可保存。")
+            return
+        
+        # 复制数据，避免在保存过程中数据被修改
+        data_to_save = self.accumulated_data.copy()
+        self.data_mutex.unlock()
+        
+        # 生成默认文件名（年月日时分秒.csv）
+        default_filename = datetime.datetime.now().strftime("%Y%m%d%H%M%S.csv")
+        
+        # 获取保存路径
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存CSV数据", default_filename, "CSV文件 (*.csv);;所有文件 (*.*)"
+        )
+        
+        if not file_path:
+            return  # 用户取消了保存操作
+        
+        try:
+            # 只保存最新的50个周期（或者全部如果少于50个）
+            cycles_to_save = min(self.csv_export_cycles, len(data_to_save))
+            csv_data = data_to_save[-cycles_to_save:]
+            
+            # 打开CSV文件进行写入
+            with open(file_path, 'w', newline='') as csvfile:
+                csv_writer = csv.writer(csvfile)
+                
+                # 直接写入数据，不包含表头和周期编号
+                for cycle_data in csv_data:
+                    csv_writer.writerow(cycle_data)
+            
+            QMessageBox.information(self, "保存成功", f"已成功保存{cycles_to_save}个周期的数据到:\n{file_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", f"保存CSV文件时发生错误:\n{str(e)}")
+
+    def toggle_auto_save(self, state):
+        """切换是否自动保存图像"""
+        self.auto_save_images = (state == Qt.CheckState.Checked.value)
+        
+        if self.auto_save_images:
+            # 启动自动保存定时器
+            self.image_save_timer.start(self.image_save_interval)
+            self.status_bar.showMessage("已启用自动保存PRPD图，每5秒保存一次", 3000)
+        else:
+            # 停止自动保存定时器
+            self.image_save_timer.stop()
+            self.status_bar.showMessage("已禁用自动保存PRPD图", 3000)
+    
+    def auto_save_image(self):
+        """自动保存PRPD图像"""
+        if not self.auto_save_images or not self.accumulated_data:
+            return
+        
+        try:
+            # 创建保存目录（如果不存在）
+            save_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "saved_images")
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+            
+            # 生成文件名
+            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            filename = f"PRPD_{timestamp}.png"
+            file_path = os.path.join(save_dir, filename)
+            
+            # 保存当前PRPD图像
+            # 创建一个新的Figure以确保只保存PRPD图（不包含PRPS图）
+            fig = Figure(figsize=(10, 6), dpi=100)
+            ax = fig.add_subplot(111)
+            
+            # 复制当前PRPD图的内容
+            chart_type = self.chart_type_combo.currentText()
+            
+            # 获取当前数据
+            self.data_mutex.lock()
+            prpd_data = self.accumulated_data[-self.max_cycles:] if len(self.accumulated_data) > self.max_cycles else self.accumulated_data.copy()
+            self.data_mutex.unlock()
+            
+            # 合并所有周期的数据用于绘图
+            all_data = []
+            x_data = []
+            
+            for cycle_data in prpd_data:
+                all_data.extend(cycle_data)
+                cycle_phases = np.linspace(0, 360, len(cycle_data))
+                x_data.extend(cycle_phases)
+            
+            # 根据当前单位设置转换数据
+            if self.use_dbm:
+                display_data = []
+                for cycle_data in prpd_data:
+                    display_data.append([self.convert_unit(x, True) for x in cycle_data])
+                
+                # 合并所有周期的转换后数据
+                all_display_data = []
+                for cycle_data in display_data:
+                    all_display_data.extend(cycle_data)
+            else:
+                display_data = prpd_data
+                all_display_data = all_data
+            
+            if chart_type == "散点图":
+                ax.scatter(x_data, all_display_data, alpha=0.7, s=10)
+            elif chart_type == "线图":
+                # 对于线图，按周期分别绘制
+                for i, cycle_data in enumerate(display_data):
+                    cycle_phases = np.linspace(0, 360, len(cycle_data))
+                    ax.plot(cycle_phases, cycle_data, linewidth=1.0)
+            
+            # 绘制参考正弦波
+            if self.show_sine_wave:
+                # 确定数据的振幅范围，用于缩放正弦波
+                if all_display_data:
+                    max_data = max(all_display_data)
+                    min_data = min(all_display_data)
+                    data_range = max_data - min_data
+                    # 计算正弦波的振幅，使其与数据的振幅范围相适应
+                    sine_amp = self.sine_amplitude * data_range / 4
+                    # 计算正弦波的偏移量，使其居中显示
+                    sine_offset = (max_data + min_data) / 2
+                else:
+                    sine_amp = self.sine_amplitude
+                    sine_offset = 0
+                
+                # 生成正弦波数据
+                x_sine = np.linspace(0, 360, 1000)
+                y_sine = sine_amp * np.sin(x_sine * 2 * np.pi / 360) + sine_offset
+                
+                # 绘制正弦波
+                ax.plot(x_sine, y_sine, 'r-', linewidth=1.5, alpha=0.7, label="参考正弦波")
+            
+            # 设置图表标题和轴标签
+            cycle_info = f"({len(prpd_data)}/{self.max_cycles}周期)"
+            ax.set_title(f"PRPD图 {cycle_info}")
+            ax.set_xlabel("相位 (0~360°)")
+            ax.set_ylabel(self.unit_label)
+            
+            # 设置网格
+            ax.grid(True, linestyle='--', alpha=0.7)
+            
+            # 保存图像
+            fig.tight_layout()
+            fig.savefig(file_path)
+            
+            # 更新状态栏
+            self.status_bar.showMessage(f"已保存PRPD图: {filename}", 3000)
+            
+        except Exception as e:
+            print(f"保存PRPD图像错误: {str(e)}")
+            self.status_bar.showMessage(f"保存PRPD图像失败: {str(e)}", 3000)
+
+    def create_custom_colormap(self, colors):
+        """
+        根据给定的颜色列表创建自定义颜色映射
+        
+        :param colors: 颜色列表，至少包含4种颜色
+        :return: matplotlib颜色映射对象
+        """
+        import matplotlib.colors as mcolors
+        import matplotlib.pyplot as plt
+        
+        # 确保有足够的颜色
+        if len(colors) < 4:
+            colors = colors + ['#FF0000']  # 默认添加红色
+        
+        # 创建颜色映射
+        n_bins = 100  # 颜色渐变的细腻程度
+        cmap = mcolors.LinearSegmentedColormap.from_list(
+            'custom_colormap', 
+            [mcolors.to_rgba(color) for color in colors[:4]], 
+            N=n_bins
+        )
+        
+        return cmap
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
