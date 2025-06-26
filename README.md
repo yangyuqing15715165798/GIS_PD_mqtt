@@ -36,6 +36,8 @@
 ![image](https://github.com/user-attachments/assets/40447295-98ba-424c-a5ae-2173ef75076e)
 ![image](https://github.com/user-attachments/assets/a9aa1d4e-0664-4826-a605-3be3d53c9c4c)
 ![image](https://github.com/user-attachments/assets/5c99882a-c48b-47d6-93cd-9a14ee853c6b)
+![image](https://github.com/user-attachments/assets/629f2bd1-25d1-43e4-bea6-680738b97bfb)
+
 
 ## 技术实现
 
